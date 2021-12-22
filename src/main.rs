@@ -14,41 +14,12 @@ const X25519_PRIVATE_KEY_LEN: usize = 32;
 // Derived from aead::chacha::KEY_LEN which is private
 const CHACHA20_POLY1305_KEY_LEN: usize = 32;
 
-// Wrapper around raw random bytes to be used as salt and nonce
-#[derive(Clone, Copy)]
-struct RandomBytes {
-    salt: [u8; digest::SHA256_OUTPUT_LEN],
-    nonce: [u8; aead::NONCE_LEN],
-}
-
-impl RandomBytes {
-    fn new(rng: &dyn SecureRandom) -> Self {
-        let mut salt = [0u8; digest::SHA256_OUTPUT_LEN];
-        rng.fill(&mut salt).unwrap();
-
-        let mut nonce = [0u8; aead::NONCE_LEN];
-        rng.fill(&mut nonce).unwrap();
-
-        Self { salt, nonce }
-    }
-
-    fn salt(&self) -> &[u8] {
-        self.salt.as_ref()
-    }
-
-    fn nonce(&self) -> [u8; aead::NONCE_LEN] {
-        self.nonce
-    }
-}
-
 // Nonce sequence that can only be used once
 struct OneNonceSequence(Option<aead::Nonce>);
 
 impl OneNonceSequence {
-    fn new(random_bytes: RandomBytes) -> Self {
-        Self(Some(aead::Nonce::assume_unique_for_key(
-            random_bytes.nonce(),
-        )))
+    fn new(nonce: [u8; aead::NONCE_LEN]) -> Self {
+        Self(Some(aead::Nonce::assume_unique_for_key(nonce)))
     }
 }
 
@@ -102,8 +73,8 @@ fn new_keypair_static(
 }
 
 // Use HKDF to derive output keying material
-fn derive_hkdf_okm(key: &[u8], random_bytes: RandomBytes) -> Vec<u8> {
-    let sha = digest::digest(&digest::SHA256, random_bytes.salt());
+fn derive_hkdf_okm(key: &[u8], salt: [u8; digest::SHA256_OUTPUT_LEN]) -> Vec<u8> {
+    let sha = digest::digest(&digest::SHA256, &salt);
     let salt = hkdf::Salt::new(hkdf::HKDF_SHA256, sha.as_ref());
     let prk = salt.extract(key);
     let HashBytes(okm) = prk
@@ -117,10 +88,10 @@ fn derive_hkdf_okm(key: &[u8], random_bytes: RandomBytes) -> Vec<u8> {
 fn new_shared_key(
     private_key: EphemeralPrivateKey,
     public_key: UnparsedPublicKey<PublicKey>,
-    random_bytes: RandomBytes,
+    salt: [u8; digest::SHA256_OUTPUT_LEN],
 ) -> UnboundKey {
     let key = agreement::agree_ephemeral(private_key, &public_key, Unspecified, |key| {
-        Ok(derive_hkdf_okm(key, random_bytes))
+        Ok(derive_hkdf_okm(key, salt))
     })
     .unwrap();
 
@@ -131,15 +102,16 @@ fn new_shared_key(
 fn encrypt(
     peer_private_key: EphemeralPrivateKey,
     self_public_key: UnparsedPublicKey<PublicKey>,
-    random_bytes: RandomBytes,
+    nonce: [u8; aead::NONCE_LEN],
+    salt: [u8; digest::SHA256_OUTPUT_LEN],
     message: Vec<u8>,
 ) -> Vec<u8> {
     let mut ciphertext = message;
 
     let aad = aead::Aad::from(b"example");
-    let seq = OneNonceSequence::new(random_bytes);
+    let seq = OneNonceSequence::new(nonce);
 
-    let key = new_shared_key(peer_private_key, self_public_key, random_bytes);
+    let key = new_shared_key(peer_private_key, self_public_key, salt);
 
     let mut seal = SealingKey::new(key, seq);
     seal.seal_in_place_append_tag(aad, &mut ciphertext).unwrap();
@@ -151,15 +123,16 @@ fn encrypt(
 fn decrypt(
     self_private_key: EphemeralPrivateKey,
     peer_public_key: UnparsedPublicKey<PublicKey>,
-    random_bytes: RandomBytes,
+    nonce: [u8; aead::NONCE_LEN],
+    salt: [u8; digest::SHA256_OUTPUT_LEN],
     ciphertext: Vec<u8>,
 ) -> Vec<u8> {
     let mut ciphertext = ciphertext;
 
     let aad = aead::Aad::from(b"example");
-    let seq = OneNonceSequence::new(random_bytes);
+    let seq = OneNonceSequence::new(nonce);
 
-    let key = new_shared_key(self_private_key, peer_public_key, random_bytes);
+    let key = new_shared_key(self_private_key, peer_public_key, salt);
 
     let mut open = OpeningKey::new(key, seq);
     let plaintext = open.open_in_place(aad, &mut ciphertext).unwrap();
@@ -174,15 +147,21 @@ fn main() {
     let (sk0, pk0) = new_keypair_static(&rng).unwrap();
     let (sk1, pk1) = new_keypair_random(&rng).unwrap();
 
-    // Message to encrypt and random bytes to use as salt and nonce
+    // Message to encrypt
     let message = Vec::from("hello world");
-    let random_bytes = RandomBytes::new(&rng);
+
+    // Random bytes to use as salt as nonce; in production these values should not be reused
+    let mut salt = [0u8; digest::SHA256_OUTPUT_LEN];
+    rng.fill(&mut salt).unwrap();
+
+    let mut nonce = [0u8; aead::NONCE_LEN];
+    rng.fill(&mut nonce).unwrap();
 
     // Encryption with peer private key and own public key
-    let ciphertext = encrypt(sk1, pk0, random_bytes, message.clone());
+    let ciphertext = encrypt(sk1, pk0, nonce, salt, message.clone());
 
     // Decryption with own private key and peer public key
-    let plaintext = decrypt(sk0, pk1, random_bytes, ciphertext);
+    let plaintext = decrypt(sk0, pk1, nonce, salt, ciphertext);
 
     // Check that plaintext is equivalent to original message
     assert!(message == plaintext);
