@@ -1,7 +1,7 @@
 use ring::{
     aead::{self, BoundKey, OpeningKey, SealingKey, UnboundKey},
     agreement::{self, EphemeralPrivateKey, PublicKey, UnparsedPublicKey},
-    digest,
+    digest::{self, Digest},
     error::Unspecified,
     hkdf,
     rand::{SecureRandom, SystemRandom},
@@ -72,9 +72,27 @@ fn new_keypair_static(
     new_keypair_internal(&rng)
 }
 
+// Hash salt and public keys together
+fn digest_salt_public_keys(
+    self_public_key: &UnparsedPublicKey<PublicKey>,
+    peer_public_key: &UnparsedPublicKey<PublicKey>,
+    salt: [u8; digest::SHA256_OUTPUT_LEN],
+) -> Digest {
+    let mut data = Vec::new();
+    data.extend_from_slice(&salt);
+    data.extend_from_slice(self_public_key.bytes().as_ref());
+    data.extend_from_slice(peer_public_key.bytes().as_ref());
+    digest::digest(&digest::SHA256, data.as_ref())
+}
+
 // Use HKDF to derive output keying material
-fn derive_hkdf_okm(key: &[u8], salt: [u8; digest::SHA256_OUTPUT_LEN]) -> Vec<u8> {
-    let sha = digest::digest(&digest::SHA256, &salt);
+fn derive_hkdf_okm(
+    key: &[u8],
+    self_public_key: &UnparsedPublicKey<PublicKey>,
+    peer_public_key: &UnparsedPublicKey<PublicKey>,
+    salt: [u8; digest::SHA256_OUTPUT_LEN],
+) -> Vec<u8> {
+    let sha = digest_salt_public_keys(self_public_key, peer_public_key, salt);
     let salt = hkdf::Salt::new(hkdf::HKDF_SHA256, sha.as_ref());
     let prk = salt.extract(key);
     let HashBytes(okm) = prk
@@ -87,11 +105,13 @@ fn derive_hkdf_okm(key: &[u8], salt: [u8; digest::SHA256_OUTPUT_LEN]) -> Vec<u8>
 // Create a shared ChaCha20-Poly1305 key that can be used to encrypt and decrypt data
 fn new_shared_key(
     private_key: EphemeralPrivateKey,
-    public_key: UnparsedPublicKey<PublicKey>,
+    public_key: &UnparsedPublicKey<PublicKey>,
+    self_public_key: &UnparsedPublicKey<PublicKey>,
+    peer_public_key: &UnparsedPublicKey<PublicKey>,
     salt: [u8; digest::SHA256_OUTPUT_LEN],
 ) -> UnboundKey {
-    let key = agreement::agree_ephemeral(private_key, &public_key, Unspecified, |key| {
-        Ok(derive_hkdf_okm(key, salt))
+    let key = agreement::agree_ephemeral(private_key, public_key, Unspecified, |key| {
+        Ok(derive_hkdf_okm(key, self_public_key, peer_public_key, salt))
     })
     .unwrap();
 
@@ -101,7 +121,8 @@ fn new_shared_key(
 // Operation to encrypt and sign data
 fn encrypt(
     peer_private_key: EphemeralPrivateKey,
-    self_public_key: UnparsedPublicKey<PublicKey>,
+    self_public_key: &UnparsedPublicKey<PublicKey>,
+    peer_public_key: &UnparsedPublicKey<PublicKey>,
     nonce: [u8; aead::NONCE_LEN],
     salt: [u8; digest::SHA256_OUTPUT_LEN],
     message: Vec<u8>,
@@ -111,7 +132,13 @@ fn encrypt(
     let aad = aead::Aad::from(b"example");
     let seq = OneNonceSequence::new(nonce);
 
-    let key = new_shared_key(peer_private_key, self_public_key, salt);
+    let key = new_shared_key(
+        peer_private_key,
+        self_public_key,
+        self_public_key,
+        peer_public_key,
+        salt,
+    );
 
     let mut seal = SealingKey::new(key, seq);
     seal.seal_in_place_append_tag(aad, &mut ciphertext).unwrap();
@@ -122,7 +149,8 @@ fn encrypt(
 // Operation to authenticate and decrypt data
 fn decrypt(
     self_private_key: EphemeralPrivateKey,
-    peer_public_key: UnparsedPublicKey<PublicKey>,
+    self_public_key: &UnparsedPublicKey<PublicKey>,
+    peer_public_key: &UnparsedPublicKey<PublicKey>,
     nonce: [u8; aead::NONCE_LEN],
     salt: [u8; digest::SHA256_OUTPUT_LEN],
     ciphertext: Vec<u8>,
@@ -132,7 +160,13 @@ fn decrypt(
     let aad = aead::Aad::from(b"example");
     let seq = OneNonceSequence::new(nonce);
 
-    let key = new_shared_key(self_private_key, peer_public_key, salt);
+    let key = new_shared_key(
+        self_private_key,
+        peer_public_key,
+        self_public_key,
+        peer_public_key,
+        salt,
+    );
 
     let mut open = OpeningKey::new(key, seq);
     let plaintext = open.open_in_place(aad, &mut ciphertext).unwrap();
@@ -158,10 +192,10 @@ fn main() {
     rng.fill(&mut nonce).unwrap();
 
     // Encryption with peer private key and own public key
-    let ciphertext = encrypt(sk1, pk0, nonce, salt, message.clone());
+    let ciphertext = encrypt(sk1, &pk0, &pk1, nonce, salt, message.clone());
 
     // Decryption with own private key and peer public key
-    let plaintext = decrypt(sk0, pk1, nonce, salt, ciphertext);
+    let plaintext = decrypt(sk0, &pk0, &pk1, nonce, salt, ciphertext);
 
     // Check that plaintext is equivalent to original message
     assert!(message == plaintext);
