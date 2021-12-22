@@ -1,11 +1,9 @@
-use std::num::NonZeroU32;
-
 use ring::{
     aead::{self, BoundKey, OpeningKey, SealingKey, UnboundKey},
     agreement::{self, EphemeralPrivateKey, PublicKey, UnparsedPublicKey},
     digest,
     error::Unspecified,
-    hkdf, pbkdf2,
+    hkdf,
     rand::{SecureRandom, SystemRandom},
     test::rand::FixedSliceRandom,
 };
@@ -101,19 +99,16 @@ fn new_keypair_static(
     new_keypair_internal(&rng)
 }
 
-// Use PBKDF2 to derive output keying material
-fn derive_pbkdf2_okm<const KEY_LEN: usize>(key: &[u8], rngdata: RandomBytes) -> Vec<u8> {
-    let salt = digest::digest(&digest::SHA256, rngdata.salt());
-    let iterations = NonZeroU32::new(100).unwrap();
-    let mut pbkdf2 = [0u8; KEY_LEN];
-    pbkdf2::derive(
-        pbkdf2::PBKDF2_HMAC_SHA256,
-        iterations,
-        salt.as_ref(),
-        key,
-        &mut pbkdf2,
-    );
-    Vec::from(pbkdf2)
+// Use HKDF to derive output keying material
+fn derive_hkdf_okm(key: &[u8], rngdata: RandomBytes) -> Vec<u8> {
+    let sha = digest::digest(&digest::SHA256, rngdata.salt());
+    let salt = hkdf::Salt::new(hkdf::HKDF_SHA256, sha.as_ref());
+    let prk = salt.extract(key);
+    let HashBytes(okm) = prk
+        .expand(&[b"example"], HashBytes(CHACHA20_POLY1305_KEY_LEN))
+        .unwrap()
+        .into();
+    okm
 }
 
 // Create a shared ChaCha20-Poly1305 key that can be used to encrypt and decrypt data
@@ -123,7 +118,7 @@ fn new_shared_key(
     rngdata: RandomBytes,
 ) -> UnboundKey {
     let key = agreement::agree_ephemeral(sk, &pk, Unspecified, |key| {
-        Ok(derive_pbkdf2_okm::<CHACHA20_POLY1305_KEY_LEN>(key, rngdata))
+        Ok(derive_hkdf_okm(key, rngdata))
     })
     .unwrap();
 
