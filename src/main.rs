@@ -45,8 +45,10 @@ impl RandomBytes {
 struct OneNonceSequence(Option<aead::Nonce>);
 
 impl OneNonceSequence {
-    fn new(rngdata: RandomBytes) -> Self {
-        Self(Some(aead::Nonce::assume_unique_for_key(rngdata.nonce())))
+    fn new(random_bytes: RandomBytes) -> Self {
+        Self(Some(aead::Nonce::assume_unique_for_key(
+            random_bytes.nonce(),
+        )))
     }
 }
 
@@ -100,8 +102,8 @@ fn new_keypair_static(
 }
 
 // Use HKDF to derive output keying material
-fn derive_hkdf_okm(key: &[u8], rngdata: RandomBytes) -> Vec<u8> {
-    let sha = digest::digest(&digest::SHA256, rngdata.salt());
+fn derive_hkdf_okm(key: &[u8], random_bytes: RandomBytes) -> Vec<u8> {
+    let sha = digest::digest(&digest::SHA256, random_bytes.salt());
     let salt = hkdf::Salt::new(hkdf::HKDF_SHA256, sha.as_ref());
     let prk = salt.extract(key);
     let HashBytes(okm) = prk
@@ -113,12 +115,12 @@ fn derive_hkdf_okm(key: &[u8], rngdata: RandomBytes) -> Vec<u8> {
 
 // Create a shared ChaCha20-Poly1305 key that can be used to encrypt and decrypt data
 fn new_shared_key(
-    sk: EphemeralPrivateKey,
-    pk: UnparsedPublicKey<PublicKey>,
-    rngdata: RandomBytes,
+    private_key: EphemeralPrivateKey,
+    public_key: UnparsedPublicKey<PublicKey>,
+    random_bytes: RandomBytes,
 ) -> UnboundKey {
-    let key = agreement::agree_ephemeral(sk, &pk, Unspecified, |key| {
-        Ok(derive_hkdf_okm(key, rngdata))
+    let key = agreement::agree_ephemeral(private_key, &public_key, Unspecified, |key| {
+        Ok(derive_hkdf_okm(key, random_bytes))
     })
     .unwrap();
 
@@ -127,17 +129,17 @@ fn new_shared_key(
 
 // Operation to encrypt and sign data
 fn encrypt(
-    sk: EphemeralPrivateKey,
-    pk: UnparsedPublicKey<PublicKey>,
-    rngdata: RandomBytes,
+    peer_private_key: EphemeralPrivateKey,
+    self_public_key: UnparsedPublicKey<PublicKey>,
+    random_bytes: RandomBytes,
     message: Vec<u8>,
 ) -> Vec<u8> {
     let mut ciphertext = message;
 
     let aad = aead::Aad::from(b"example");
-    let seq = OneNonceSequence::new(rngdata);
+    let seq = OneNonceSequence::new(random_bytes);
 
-    let key = new_shared_key(sk, pk, rngdata);
+    let key = new_shared_key(peer_private_key, self_public_key, random_bytes);
 
     let mut seal = SealingKey::new(key, seq);
     seal.seal_in_place_append_tag(aad, &mut ciphertext).unwrap();
@@ -147,17 +149,17 @@ fn encrypt(
 
 // Operation to authenticate and decrypt data
 fn decrypt(
-    sk: EphemeralPrivateKey,
-    pk: UnparsedPublicKey<PublicKey>,
-    rngdata: RandomBytes,
+    self_private_key: EphemeralPrivateKey,
+    peer_public_key: UnparsedPublicKey<PublicKey>,
+    random_bytes: RandomBytes,
     ciphertext: Vec<u8>,
 ) -> Vec<u8> {
     let mut ciphertext = ciphertext;
 
     let aad = aead::Aad::from(b"example");
-    let seq = OneNonceSequence::new(rngdata);
+    let seq = OneNonceSequence::new(random_bytes);
 
-    let key = new_shared_key(sk, pk, rngdata);
+    let key = new_shared_key(self_private_key, peer_public_key, random_bytes);
 
     let mut open = OpeningKey::new(key, seq);
     let plaintext = open.open_in_place(aad, &mut ciphertext).unwrap();
@@ -174,13 +176,13 @@ fn main() {
 
     // Message to encrypt and random bytes to use as salt and nonce
     let message = Vec::from("hello world");
-    let rngdata = RandomBytes::new(&rng);
+    let random_bytes = RandomBytes::new(&rng);
 
     // Encryption with peer private key and own public key
-    let ciphertext = encrypt(sk1, pk0, rngdata, message.clone());
+    let ciphertext = encrypt(sk1, pk0, random_bytes, message.clone());
 
     // Decryption with own private key and peer public key
-    let plaintext = decrypt(sk0, pk1, rngdata, ciphertext);
+    let plaintext = decrypt(sk0, pk1, random_bytes, ciphertext);
 
     // Check that plaintext is equivalent to original message
     assert!(message == plaintext);
