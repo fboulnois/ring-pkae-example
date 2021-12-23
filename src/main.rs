@@ -8,13 +8,13 @@ use ring::{
     test::rand::FixedSliceRandom,
 };
 
-// Derived from ec::curve25519::x25519::PRIVATE_KEY_LEN which is private
+/// Derived from the private value `ec::curve25519::x25519::PRIVATE_KEY_LEN`
 const X25519_PRIVATE_KEY_LEN: usize = 32;
 
-// Derived from aead::chacha::KEY_LEN which is private
+/// Derived from the private value `aead::chacha::KEY_LEN`
 const CHACHA20_POLY1305_KEY_LEN: usize = 32;
 
-// Nonce sequence that can only be used once
+/// A nonce sequence that can only be used once
 struct OneNonceSequence(Option<aead::Nonce>);
 
 impl OneNonceSequence {
@@ -29,7 +29,7 @@ impl aead::NonceSequence for OneNonceSequence {
     }
 }
 
-// Generic wrapper for HKDF to output hash of specific length
+/// A generic HKDF wrapper to output hashes of a specific length
 #[derive(Debug, PartialEq)]
 struct HashBytes<T: core::fmt::Debug + PartialEq>(T);
 
@@ -47,7 +47,7 @@ impl From<hkdf::Okm<'_, HashBytes<usize>>> for HashBytes<Vec<u8>> {
     }
 }
 
-// Create a new X25519 public and private key pair
+/// Creates a new X25519 public and private keypair
 fn new_keypair_internal(
     rng: &dyn SecureRandom,
 ) -> Result<(EphemeralPrivateKey, UnparsedPublicKey<PublicKey>), Unspecified> {
@@ -57,13 +57,16 @@ fn new_keypair_internal(
     Ok((private, unparsed))
 }
 
+/// Creates a secure X25519 keypair for key agreement
 fn new_keypair_random(
     rng: &dyn SecureRandom,
 ) -> Result<(EphemeralPrivateKey, UnparsedPublicKey<PublicKey>), Unspecified> {
     new_keypair_internal(rng)
 }
 
-// Do not use this in production, use new_keypair_random instead; this function is used to create reproducible key pairs for testing
+/// Creates reproducible keypairs for testing
+///
+/// **Do not use in production**, use [`new_keypair_random`] instead.
 fn new_keypair_static(
     _rng: &dyn SecureRandom,
 ) -> Result<(EphemeralPrivateKey, UnparsedPublicKey<PublicKey>), Unspecified> {
@@ -72,7 +75,7 @@ fn new_keypair_static(
     new_keypair_internal(&rng)
 }
 
-// Hash salt and public keys together
+/// Hashes the salt and public keys together
 fn digest_salt_public_keys(
     self_public_key: &UnparsedPublicKey<PublicKey>,
     peer_public_key: &UnparsedPublicKey<PublicKey>,
@@ -85,7 +88,12 @@ fn digest_salt_public_keys(
     digest::digest(&digest::SHA256, data.as_ref())
 }
 
-// Use HKDF to derive output keying material
+/// Uses HKDF to derive output keying material (OKM)
+///
+/// The input keying material (IKM) is the raw X25519 shared secret. The HKDF
+/// salt is a hash of the concatenation of random bytes along with the public
+/// keys themselves. This ensures each party can prove which exact public keys
+/// they intended to perform the key exchange with.
 fn derive_hkdf_okm(
     key: &[u8],
     self_public_key: &UnparsedPublicKey<PublicKey>,
@@ -102,7 +110,17 @@ fn derive_hkdf_okm(
     okm
 }
 
-// Create a shared ChaCha20-Poly1305 key that can be used to encrypt and decrypt data
+/// Creates a shared key to encrypt and decrypt data
+///
+/// The shared secret is derived from an X25519 key agreement. As recommended in
+/// [RFC7748](https://datatracker.ietf.org/doc/html/rfc7748#section-6.1), the
+/// shared secret is passed through a key derivation function (KDF) to create a
+/// shared key for added security. HKDF is used as a KDF because it is simple
+/// and based on the well-understood hash-based message authentication code
+/// (HMAC).
+///
+/// The shared key is formatted to be used for ChaCha20-Poly1305 authenticated
+/// encryption.
 fn new_shared_key(
     private_key: EphemeralPrivateKey,
     public_key: &UnparsedPublicKey<PublicKey>,
@@ -118,7 +136,10 @@ fn new_shared_key(
     aead::UnboundKey::new(&aead::CHACHA20_POLY1305, &key).unwrap()
 }
 
-// Operation to encrypt and sign data
+/// Encrypts and signs data
+///
+/// The data is encrypted and signed using the peer private key and your own
+/// public key.
 fn encrypt(
     peer_private_key: EphemeralPrivateKey,
     self_public_key: &UnparsedPublicKey<PublicKey>,
@@ -146,7 +167,10 @@ fn encrypt(
     ciphertext
 }
 
-// Operation to authenticate and decrypt data
+/// Authenticates and decrypts data
+///
+/// The data is authenticated and decrypted using your own private key and the
+/// peer public key.
 fn decrypt(
     self_private_key: EphemeralPrivateKey,
     self_public_key: &UnparsedPublicKey<PublicKey>,
@@ -181,7 +205,6 @@ fn main() {
     let (sk0, pk0) = new_keypair_static(&rng).unwrap();
     let (sk1, pk1) = new_keypair_random(&rng).unwrap();
 
-    // Message to encrypt
     let message = Vec::from("hello world");
 
     // Random bytes to use as salt as nonce; in production these values should not be reused
@@ -191,10 +214,8 @@ fn main() {
     let mut nonce = [0u8; aead::NONCE_LEN];
     rng.fill(&mut nonce).unwrap();
 
-    // Encryption with peer private key and own public key
     let ciphertext = encrypt(sk1, &pk0, &pk1, nonce, salt, message.clone());
 
-    // Decryption with own private key and peer public key
     let plaintext = decrypt(sk0, &pk0, &pk1, nonce, salt, ciphertext);
 
     // Check that plaintext is equivalent to original message
