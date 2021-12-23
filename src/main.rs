@@ -219,14 +219,14 @@ fn main() {
     let (salt, nonce) = new_salt_and_nonce(&rng);
 
     // Create keypairs for public key authenticated encryption
-    let (sk0, pk0) = new_keypair_static(&rng).unwrap();
-    let (sk1, pk1) = new_keypair_random(&rng).unwrap();
+    let (self_private_key, self_public_key) = new_keypair_static(&rng).unwrap();
+    let (peer_private_key, peer_public_key) = new_keypair_random(&rng).unwrap();
 
     let message = Vec::from("hello world");
 
-    let ciphertext = encrypt(sk1, &pk0, &pk1, nonce, salt, message.clone());
+    let ciphertext = encrypt(peer_private_key, &self_public_key, &peer_public_key, nonce, salt, message.clone());
 
-    let plaintext = decrypt(sk0, &pk0, &pk1, nonce, salt, ciphertext);
+    let plaintext = decrypt(self_private_key, &self_public_key, &peer_public_key, nonce, salt, ciphertext);
 
     // Check that plaintext is equivalent to original message
     assert!(message == plaintext);
