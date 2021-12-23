@@ -47,6 +47,21 @@ impl From<hkdf::Okm<'_, HashBytes<usize>>> for HashBytes<Vec<u8>> {
     }
 }
 
+/// Creates random bytes to use as salt and nonce
+///
+/// These values should be recreated any time prior to encrypting a message.
+fn new_salt_and_nonce(
+    rng: &dyn SecureRandom,
+) -> ([u8; digest::SHA256_OUTPUT_LEN], [u8; aead::NONCE_LEN]) {
+    let mut salt = [0u8; digest::SHA256_OUTPUT_LEN];
+    rng.fill(&mut salt).unwrap();
+
+    let mut nonce = [0u8; aead::NONCE_LEN];
+    rng.fill(&mut nonce).unwrap();
+
+    (salt, nonce)
+}
+
 /// Creates a new X25519 public and private keypair
 fn new_keypair_internal(
     rng: &dyn SecureRandom,
@@ -201,18 +216,13 @@ fn decrypt(
 fn main() {
     let rng = SystemRandom::new();
 
+    let (salt, nonce) = new_salt_and_nonce(&rng);
+
     // Create keypairs for public key authenticated encryption
     let (sk0, pk0) = new_keypair_static(&rng).unwrap();
     let (sk1, pk1) = new_keypair_random(&rng).unwrap();
 
     let message = Vec::from("hello world");
-
-    // Random bytes to use as salt as nonce; in production these values should not be reused
-    let mut salt = [0u8; digest::SHA256_OUTPUT_LEN];
-    rng.fill(&mut salt).unwrap();
-
-    let mut nonce = [0u8; aead::NONCE_LEN];
-    rng.fill(&mut nonce).unwrap();
 
     let ciphertext = encrypt(sk1, &pk0, &pk1, nonce, salt, message.clone());
 
