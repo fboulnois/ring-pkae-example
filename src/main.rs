@@ -228,6 +228,8 @@ fn main() {
 
     let plaintext = decrypt(self_private_key, &self_public_key, &peer_public_key, nonce, salt, ciphertext);
 
-    // Check that plaintext is equivalent to original message
-    assert!(message == plaintext);
+    match plaintext == message {
+        true => println!("Ok"),
+        false => eprintln!("ERROR: Plaintext does not match original message.")
+    }
 }
