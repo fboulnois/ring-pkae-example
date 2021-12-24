@@ -2,6 +2,10 @@
 name = "ring-encrypt"
 version = "0.1.0"
 edition = "2021"
+authors = [ "fboulnois <fboulnois@users.noreply.github.com>" ]
+description = "An example of public key authenticated encryption in Rust"
+keywords = [ "cryptography", "crypto", "public key authenticated encryption", "ecdh", "aead" ]
+readme = "README.md"
 
 [dependencies]
 ring = "0.16.20"
