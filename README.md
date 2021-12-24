@@ -20,6 +20,12 @@ including `rustls` and by extension `actix-net`, `actix-web`, `tokio-rustls`,
 `h2`, and `reqwest`. Writing PKAE functionality using `ring` avoids having to
 bring in a separate dependency.
 
+## Documentation
+
+The implementation is short and each function is documented, so the best
+documentation is the [code itself](src/main.rs). A browsable `rustdoc` version
+can also be created using `cargo rustdoc -- --document-private-items`.
+
 ## Building and running the code
 
 Type `cargo run`. If the code encrypts and decrypts the message successfully, it
