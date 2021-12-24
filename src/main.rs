@@ -224,12 +224,26 @@ fn main() {
 
     let message = Vec::from("hello world");
 
-    let ciphertext = encrypt(peer_private_key, &self_public_key, &peer_public_key, nonce, salt, message.clone());
+    let ciphertext = encrypt(
+        peer_private_key,
+        &self_public_key,
+        &peer_public_key,
+        nonce,
+        salt,
+        message.clone(),
+    );
 
-    let plaintext = decrypt(self_private_key, &self_public_key, &peer_public_key, nonce, salt, ciphertext);
+    let plaintext = decrypt(
+        self_private_key,
+        &self_public_key,
+        &peer_public_key,
+        nonce,
+        salt,
+        ciphertext,
+    );
 
     match plaintext == message {
         true => println!("Ok"),
-        false => eprintln!("ERROR: Plaintext does not match original message.")
+        false => eprintln!("ERROR: Plaintext does not match original message."),
     }
 }
