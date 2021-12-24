@@ -90,7 +90,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ring-encrypt"
+name = "ring-pkae-example"
 version = "0.1.0"
 dependencies = [
  "ring",

@@ -1,5 +1,5 @@
 [package]
-name = "ring-encrypt"
+name = "ring-pkae-example"
 version = "0.1.0"
 edition = "2021"
 authors = [ "fboulnois <fboulnois@users.noreply.github.com>" ]
