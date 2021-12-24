@@ -5,7 +5,7 @@
             "name": "(gdb) Launch",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/target/debug/ring-encrypt",
+            "program": "${workspaceFolder}/target/debug/ring-pkae-example",
             "args": [],
             "preLaunchTask": "${defaultBuildTask}",
             "stopAtEntry": false,
